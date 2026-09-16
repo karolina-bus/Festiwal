@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Losowanie osób</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:linear-gradient(135deg,#eef2ff,#f8fafc);color:#172033;min-height:100vh}
+.wrap{max-width:1000px;margin:0 auto;padding:32px 18px 50px}
+h1{margin:0 0 8px;font-size:clamp(32px,6vw,52px)}
+.sub{margin:0 0 28px;color:#64748b}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:20px;padding:22px;box-shadow:0 12px 35px #0000000d;margin-bottom:18px}
+.upload{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+input[type=file]{display:none}
+.filebtn,.btn{border:0;border-radius:12px;padding:12px 18px;font-weight:700;cursor:pointer;font-size:15px}
+.filebtn{background:#eef2ff;color:#3730a3}
+.btn.primary{background:#4f46e5;color:white;font-size:20px;padding:16px 30px;width:100%}
+.btn.secondary{background:#f1f5f9;color:#334155}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.stats{display:flex;gap:12px;flex-wrap:wrap;margin-top:16px}
+.stat{background:#f8fafc;border-radius:12px;padding:12px 16px}
+.stat b{font-size:20px}
+.status{color:#64748b;margin:10px 0 0}
+.result{text-align:center;min-height:190px;display:flex;flex-direction:column;justify-content:center}
+.result .label{color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.12em}
+.winner{font-size:clamp(38px,8vw,72px);font-weight:900;margin:8px 0;overflow-wrap:anywhere}
+.spinning{animation:pulse .12s infinite alternate}
+@keyframes pulse{from{transform:scale(.98);opacity:.65}to{transform:scale(1.02);opacity:1}}
+.controls{display:flex;gap:10px;margin-top:12px}
+.controls .btn{flex:1}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th,td{text-align:left;padding:10px;border-bottom:1px solid #e5e7eb}
+.small{font-size:13px;color:#64748b}
+.error{color:#b91c1c;background:#fef2f2;border-radius:10px;padding:12px;margin-top:12px;display:none}
+ol{padding-left:24px}
+.empty{color:#94a3b8}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎲 Losowanie</h1>
+  <p class="sub">Wczytaj Excel, a następnie wylosuj osoby.</p>
+
+  <div class="card">
+    <div class="upload">
+      <label class="filebtn" for="file">📁 Wybierz plik Excel</label>
+      <input id="file" type="file" accept=".xlsx,.xls,.csv">
+      <span id="filename" class="small">Nie wybrano pliku</span>
+    </div>
+    <div id="error" class="error"></div>
+    <div class="stats">
+      <div class="stat">Wszystkich: <b id="total">0</b></div>
+      <div class="stat">Pozostało: <b id="remaining">0</b></div>
+      <div class="stat">Wylosowano: <b id="drawn">0</b></div>
+    </div>
+  </div>
+
+  <div class="card result">
+    <div class="label">Wynik</div>
+    <div id="winner" class="winner">—</div>
+    <div id="status" class="status">Najpierw wczytaj plik.</div>
+  </div>
+
+  <div class="card">
+    <button id="draw" class="btn primary" disabled>🎲 LOSUJ</button>
+    <div class="controls">
+      <button id="reset" class="btn secondary" disabled>↺ Resetuj</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📜 Historia losowania</h2>
+    <ol id="history"><li class="empty">Brak wyników.</li></ol>
+  </div>
+
+  <div class="card">
+    <h2>👥 Wczytane osoby</h2>
+    <div id="people" class="small">Brak danych.</div>
+  </div>
+</div>
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script>
+const fileInput=document.getElementById('file');
+const filename=document.getElementById('filename');
+const errorBox=document.getElementById('error');
+const totalEl=document.getElementById('total');
+const remainingEl=document.getElementById('remaining');
+const drawnEl=document.getElementById('drawn');
+const winnerEl=document.getElementById('winner');
+const statusEl=document.getElementById('status');
+const drawBtn=document.getElementById('draw');
+const resetBtn=document.getElementById('reset');
+const historyEl=document.getElementById('history');
+const peopleEl=document.getElementById('people');
+
+let allPeople=[], remaining=[], history=[], timer=null;
+
+function showError(msg){
+  errorBox.textContent=msg;
+  errorBox.style.display=msg?'block':'none';
+}
+function update(){
+  totalEl.textContent=allPeople.length;
+  remainingEl.textContent=remaining.length;
+  drawnEl.textContent=history.length;
+  drawBtn.disabled=remaining.length===0;
+  resetBtn.disabled=allPeople.length===0;
+  historyEl.innerHTML=history.length
+    ? history.map(x=>'<li>'+escapeHtml(x)+'</li>').join('')
+    : '<li class="empty">Brak wyników.</li>';
+  peopleEl.innerHTML=allPeople.length
+    ? '<table><thead><tr><th>#</th><th>Osoba</th></tr></thead><tbody>'+
+      allPeople.map((x,i)=>'<tr><td>'+(i+1)+'</td><td>'+escapeHtml(x)+'</td></tr>').join('')+
+      '</tbody></table>'
+    : 'Brak danych.';
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function clean(v){return String(v??'').trim();}
+function parseRows(rows){
+  if(!rows.length) return [];
+  const headers=rows[0].map(clean);
+  const likely=headers.findIndex(h=>/imi[eę]|nazw|osob|uczest|person|name/i.test(h));
+  const col=likely>=0?likely:0;
+  const start=likely>=0?1:0;
+  return rows.slice(start).map(r=>clean(r[col])).filter(Boolean);
+}
+fileInput.addEventListener('change', async e=>{
+  const file=e.target.files[0];
+  if(!file)return;
+  filename.textContent=file.name;
+  showError('');
+  try{
+    const data=await file.arrayBuffer();
+    const wb=XLSX.read(data,{type:'array'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+    const people=parseRows(rows);
+    if(!people.length) throw new Error('Nie znaleziono osób. Umieść imiona/nazwiska w pierwszej kolumnie lub dodaj nagłówek typu „Imię”, „Nazwisko” albo „Osoba”.');
+    allPeople=[...new Set(people)];
+    remaining=[...allPeople];
+    history=[];
+    winnerEl.textContent='—';
+    statusEl.textContent='Gotowe. Kliknij „LOSUJ”.';
+    update();
+  }catch(err){
+    allPeople=[];remaining=[];history=[];
+    update();
+    showError('Nie udało się odczytać pliku: '+err.message);
+    statusEl.textContent='Wczytaj poprawny plik Excel.';
+  }
+});
+drawBtn.addEventListener('click',()=>{
+  if(!remaining.length)return;
+  drawBtn.disabled=true;
+  resetBtn.disabled=true;
+  winnerEl.classList.add('spinning');
+  statusEl.textContent='Losowanie…';
+  let elapsed=0;
+  clearInterval(timer);
+  timer=setInterval(()=>{
+    const temp=remaining[Math.floor(Math.random()*remaining.length)];
+    winnerEl.textContent=temp;
+    elapsed+=100;
+    if(elapsed>=2600){
+      clearInterval(timer);
+      const idx=Math.floor(Math.random()*remaining.length);
+      const winner=remaining.splice(idx,1)[0];
+      history.push(winner);
+      winnerEl.textContent=winner;
+      winnerEl.classList.remove('spinning');
+      statusEl.textContent='Wylosowana osoba!';
+      resetBtn.disabled=false;
+      update();
+    }
+  },100);
+});
+resetBtn.addEventListener('click',()=>{
+  clearInterval(timer);
+  remaining=[...allPeople];
+  history=[];
+  winnerEl.textContent='—';
+  winnerEl.classList.remove('spinning');
+  statusEl.textContent='Losowanie zostało zresetowane.';
+  update();
+});
+update();
+</script>
+</body>
+</html>
